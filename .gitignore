@@ -1,0 +1,17 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/touching
+touching.so
+touching.dylib
+touching.dll
+touching.a
+touching.lib
+touching-test-*
+*.exe
+*.o
+*.obj
+*.lst
+dub.selections.json
+data.json
