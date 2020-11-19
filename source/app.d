@@ -75,6 +75,22 @@ ServerData parseServerData(string dataText)
     return serverData;
 }
 
+struct ServerConfig
+{
+    @optional @name("data_path") string dataPath = "./data.json";
+    @optional ushort port = 27080;
+    @optional @name("refetch_users_interval") ushort refetchUsersInterval = 20;
+    @name("twitch_channel") string twitchChannel;
+}
+
+ServerConfig parseServerConfig(string configText)
+{
+    auto configJson = parseJsonString(configText);
+    auto serverConfig = deserializeJson!ServerConfig(configJson);
+    serverConfig.twitchChannel = serverConfig.twitchChannel.toLower;
+    return serverConfig;
+}
+
 string formatNamed(scope string format, scope const string[string] params)
 {
     import std.array : appender;
@@ -125,6 +141,7 @@ unittest
 
     // no expanding if there's no such key
     assert(formatNamed("$ says hello to $targetless", ["target": "no"]) == "$ says hello to $targetless");
+    assert(formatNamed("", ["target":"no"]) == "");
 }
 
 struct AimedCommandHandler
@@ -266,12 +283,14 @@ void setupAimedCommandRoutes(URLRouter router, ServerContext context)
 
 class ServerContext
 {
+    ServerConfig config;
     ServerData data;
     StopWatch usersUpdateWatch;
     string[] users;
     bool updatingUsers;
 
-    this(ServerData data) {
+    this(ServerConfig config, ServerData data) {
+        this.config = config;
         this.data = data;
         usersUpdateWatch = StopWatch(AutoStart.no);
     }
@@ -286,7 +305,7 @@ class ServerContext
         }
         try {
             updatingUsers = true;
-            res = requestHTTP("http://tmi.twitch.tv/group/user/freeslave/chatters", (scope HTTPClientRequest req) {});
+            res = requestHTTP("http://tmi.twitch.tv/group/user/" ~ config.twitchChannel ~ "/chatters", (scope HTTPClientRequest req) {});
             scope(exit) res.dropBody();
             auto chattersJson = res.readJson();
 
@@ -328,7 +347,7 @@ class ServerContext
             updateUserList();
             usersUpdateWatch.start();
         }
-        if (usersUpdateWatch.peek.total!"seconds" >= 20) {
+        if (usersUpdateWatch.peek.total!"seconds" >= config.refetchUsersInterval) {
             logInfo("Re-fetching users");
             updateUserList();
             usersUpdateWatch.reset();
@@ -339,14 +358,17 @@ class ServerContext
 
 void main()
 {
-    auto dataText = readFile("./data.json").assumeUnique.assumeUTF;
-    auto context = new ServerContext(parseServerData(dataText));
+    auto configText = readFile("./config.json").assumeUnique.assumeUTF;
+    auto serverConfig = parseServerConfig(configText);
+
+    auto dataText = readFile(serverConfig.dataPath).assumeUnique.assumeUTF;
+    auto context = new ServerContext(serverConfig, parseServerData(dataText));
 
     auto router = new URLRouter;
     setupAimedCommandRoutes(router, context);
 
     auto httpSettings = new HTTPServerSettings;
-    httpSettings.port = 27080;
+    httpSettings.port = serverConfig.port;
     httpSettings.bindAddresses = ["0.0.0.0"];
 
     auto listenServer = listenHTTP(httpSettings, router);
