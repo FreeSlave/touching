@@ -47,6 +47,7 @@ struct AimedCommandVariant
     @optional string format;
     @optional @name("format_self") string formatSelfTarget;
     @optional @name("parameters") string[][string] randomizedParams;
+    @optional int chance;
 }
 
 struct AimedCommand
@@ -56,7 +57,6 @@ struct AimedCommand
     @optional @name("format_notarget") string formatNoTarget;
     @optional @name("self") string selfTargetName;
     @optional @name("parameters") string[][string] randomizedParams;
-    @optional @name("parameters_self") string[][string] randomizedSelfTargetParams;
     @optional AimedCommandVariant[] variants;
     @optional @name("random_self_aim") bool allowRandomSelfAim;
 }
@@ -202,19 +202,45 @@ struct AimedCommandHandler
 
         string[string] parameters;
 
-        fillRandomParameters(parameters, command.randomizedSelfTargetParams);
         fillRandomParameters(parameters, command.randomizedParams);
 
         if (command.variants.length)
         {
-            auto chosenIndex = uniform(0, command.variants.length);
+            size_t chooseTheVariantIndex() {
+                import std.algorithm.searching : all;
+                if (all!"a.chance > 0"(command.variants))
+                {
+                    int sum;
+                    foreach(ref v; command.variants) {
+                        sum += v.chance;
+                    }
+                    int r = uniform(0, sum);
+                    int border;
+                    foreach(size_t i, ref v; command.variants)
+                    {
+                        border += command.variants[i].chance;
+                        if (r < border)
+                            return i;
+                    }
+                    return 0;
+                }
+                else
+                {
+                    return uniform(0, command.variants.length);
+                }
+            }
+
+            auto chosenIndex = chooseTheVariantIndex();
             auto chosenVariant = command.variants[chosenIndex];
-            format = chosenVariant.format;
 
             if (targetIsSelf || targetIsNotFound)
             {
                 if (chosenVariant.formatSelfTarget.length)
                     format = chosenVariant.formatSelfTarget;
+            }
+            else if (chosenVariant.format.length)
+            {
+                format = chosenVariant.format;
             }
 
             fillRandomParameters(parameters, command.variants[chosenIndex].randomizedParams);
