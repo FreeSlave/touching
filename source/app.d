@@ -207,19 +207,10 @@ struct AimedCommandHandler
         }
 
         string format = command.format;
-
-        if (targetIsSelf || targetIsNotFound)
-        {
-            if (command.formatSelfTarget.length)
-                format = command.formatSelfTarget;
-            if (targetIsNotFound && command.formatNoTarget.length)
-                format = command.formatNoTarget;
-            if (command.selfTargetName.length)
-                target = command.selfTargetName;
-        }
+        string formatSelfTarget = command.formatSelfTarget;
+        string selfTarget = command.selfTargetName;
 
         string[string] parameters;
-
         fillRandomParameters(parameters, command.randomizedParams);
 
         if (command.variants.length)
@@ -251,15 +242,10 @@ struct AimedCommandHandler
             auto chosenIndex = chooseTheVariantIndex();
             auto chosenVariant = command.variants[chosenIndex];
 
-            if (targetIsSelf || targetIsNotFound)
-            {
-                if (chosenVariant.formatSelfTarget.length)
-                    format = chosenVariant.formatSelfTarget;
-            }
-            else if (chosenVariant.format.length)
-            {
+            if (chosenVariant.formatSelfTarget.length)
+                formatSelfTarget = chosenVariant.formatSelfTarget;
+            if (chosenVariant.format.length)
                 format = chosenVariant.format;
-            }
 
             fillRandomParameters(parameters, command.variants[chosenIndex].randomizedParams);
         }
@@ -269,6 +255,13 @@ struct AimedCommandHandler
 
         logInfo("user: '%s', target: '%s', self: %s, notarget: %s", user, target, targetIsSelf, targetIsNotFound);
 
+        if (targetIsSelf || targetIsNotFound)
+        {
+            if (selfTarget.length)
+                parameters["target"] = selfTarget;
+            if (formatSelfTarget.length)
+                format = formatSelfTarget;
+        }
         plainTextAnswer(res, formatNamed(format, parameters));
     }
 }
