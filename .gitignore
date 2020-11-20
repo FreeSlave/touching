@@ -15,3 +15,5 @@ touching-test-*
 *.lst
 dub.selections.json
 data.json
+config.json
+*.log

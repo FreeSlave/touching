@@ -81,6 +81,7 @@ struct ServerConfig
     @optional ushort port = 27080;
     @optional @name("refetch_users_interval") ushort refetchUsersInterval = 20;
     @name("twitch_channel") string twitchChannel;
+    @optional @name("log_file") string logFile;
 }
 
 ServerConfig parseServerConfig(string configText)
@@ -360,6 +361,10 @@ void main()
 {
     auto configText = readFile("./config.json").assumeUnique.assumeUTF;
     auto serverConfig = parseServerConfig(configText);
+
+    if (serverConfig.logFile.length) {
+        setLogFile(serverConfig.logFile);
+    }
 
     auto dataText = readFile(serverConfig.dataPath).assumeUnique.assumeUTF;
     auto context = new ServerContext(serverConfig, parseServerData(dataText));
