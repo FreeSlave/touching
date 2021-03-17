@@ -16,6 +16,7 @@ import std.datetime.stopwatch;
 import std.exception : assumeUnique;
 import std.random : uniform;
 import std.range : assumeSorted, SortedRange;
+import std.path : dirName;
 
 @safe bool isPriviligedUserLevel(string userLevel) nothrow pure @nogc
 {
@@ -253,7 +254,7 @@ struct AimedCommandHandler
         parameters["user"] = user;
         parameters["target"] = target;
 
-        logInfo("user: '%s', target: '%s', self: %s, notarget: %s", user, target, targetIsSelf, targetIsNotFound);
+        logInfo("user: '%s', command: '%s', target: '%s', self: %s, notarget: %s", user, this.name, target, targetIsSelf, targetIsNotFound);
 
         if (targetIsSelf || targetIsNotFound)
         {
@@ -371,6 +372,41 @@ void main()
 
     auto listenServer = listenHTTP(httpSettings, router);
     scope(exit) listenServer.stopListening();
+
+    const dataDirName = serverConfig.dataPath.dirName;
+    auto watcher = watchDirectory(dataDirName, false);
+
+    auto timer = setTimer(dur!"seconds"(1), {
+        DirectoryChange[] changes;
+        if (watcher.readChanges(changes, dur!"seconds"(-1)))
+        {
+            auto dataNativePath = NativePath(serverConfig.dataPath);
+            bool dataChanged = false;
+            foreach(ref change; changes)
+            {
+                if (change.type == DirectoryChangeType.modified && change.path == dataNativePath)
+                {
+                    dataChanged = true;
+                    break;
+                }
+            }
+
+            if (dataChanged)
+            {
+                logInfo("%s changed. Trying to reload server data...", serverConfig.dataPath);
+                try {
+                    auto serverData = readFile(serverConfig.dataPath).assumeUnique.assumeUTF.parseServerData;
+                    context.data = serverData;
+                    setupAimedCommandRoutes(router, context);
+                    router.rebuild();
+                    logInfo("Successfully updated server data");
+                } catch(Exception e) {
+                    logError("Failed to load new data: %s", e.msg);
+                }
+            }
+        }
+    }, true);
+    scope(exit) timer.stop();
 
     runApplication();
 }
