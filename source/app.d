@@ -146,134 +146,112 @@ unittest
     assert(formatNamed("", ["target":"no"]) == "");
 }
 
-struct AimedCommandHandler
+void fillRandomParameters(ref string[string] parameters, scope const string[][string] randomParams)
 {
-    static void fillRandomParameters(ref string[string] parameters, scope const string[][string] randomParams)
+    foreach(string paramName, const(string)[] paramList; randomParams)
     {
-        foreach(string paramName, const(string)[] paramList; randomParams)
-        {
-            parameters[paramName] = paramList[uniform(0, paramList.length)];
-        }
-    }
-
-    string name;
-    const(AimedCommand) command;
-    ServerContext context;
-
-    this(string name, const(AimedCommand) command, ServerContext context)
-    {
-        this.name = name;
-        this.command = command;
-        this.context = context;
-    }
-    void opCall(HTTPServerRequest req, HTTPServerResponse res)
-    {
-        enforceParameters(req);
-
-        auto user = req.query["user"];
-        auto pTarget = "target" in req.query;
-        bool targetIsSelf = false;
-        bool targetIsNotFound = false;
-        string target = pTarget ? *pTarget : string.init;
-
-        bool targetIsUser(string target)
-        {
-            return icmp2(target, user) == 0 || (target.length > 1 && target[0] == '@' && icmp2(target[1..$], user) == 0);
-        }
-
-        if (target.length == 0)
-        {
-            auto users = context.recentUserList();
-            if (users.length == 0)
-                targetIsNotFound = true;
-            else
-            {
-                auto userIndex = uniform(0, users.length);
-                if (!command.allowRandomSelfAim && targetIsUser(users[userIndex]))
-                {
-                    if (userIndex > 0)
-                        userIndex--;
-                    else if (userIndex < users.length)
-                        userIndex++;
-                    else
-                        targetIsNotFound = true;
-                }
-                target = users[userIndex];
-            }
-        }
-
-        if (targetIsUser(target))
-        {
-            targetIsSelf = true;
-        }
-
-        string format = command.format;
-        string formatSelfTarget = command.formatSelfTarget;
-        string selfTarget = command.selfTargetName;
-
-        string[string] parameters;
-        fillRandomParameters(parameters, command.randomizedParams);
-
-        if (command.variants.length)
-        {
-            size_t chooseTheVariantIndex() {
-                import std.algorithm.searching : all;
-                if (all!"a.chance > 0"(command.variants))
-                {
-                    int sum;
-                    foreach(ref v; command.variants) {
-                        sum += v.chance;
-                    }
-                    int r = uniform(0, sum);
-                    int border;
-                    foreach(size_t i, ref v; command.variants)
-                    {
-                        border += command.variants[i].chance;
-                        if (r < border)
-                            return i;
-                    }
-                    return 0;
-                }
-                else
-                {
-                    return uniform(0, command.variants.length);
-                }
-            }
-
-            auto chosenIndex = chooseTheVariantIndex();
-            auto chosenVariant = command.variants[chosenIndex];
-
-            if (chosenVariant.formatSelfTarget.length)
-                formatSelfTarget = chosenVariant.formatSelfTarget;
-            if (chosenVariant.format.length)
-                format = chosenVariant.format;
-
-            fillRandomParameters(parameters, command.variants[chosenIndex].randomizedParams);
-        }
-
-        parameters["user"] = user;
-        parameters["target"] = target;
-
-        logInfo("user: '%s', command: '%s', target: '%s', self: %s, notarget: %s", user, this.name, target, targetIsSelf, targetIsNotFound);
-
-        if (targetIsSelf || targetIsNotFound)
-        {
-            if (selfTarget.length)
-                parameters["target"] = selfTarget;
-            if (formatSelfTarget.length)
-                format = formatSelfTarget;
-        }
-        plainTextAnswer(res, formatNamed(format, parameters));
+        parameters[paramName] = paramList[uniform(0, paramList.length)];
     }
 }
 
-void setupAimedCommandRoutes(URLRouter router, ServerContext context)
+void handleAimedCommand(HTTPServerRequest req, HTTPServerResponse res, string commandName, scope const AimedCommand command, ServerContext context)
 {
-    foreach(string name, ref command; context.data.aimedCommands)
+    enforceParameters(req);
+
+    auto user = req.query["user"];
+    auto pTarget = "target" in req.query;
+    bool targetIsSelf = false;
+    bool targetIsNotFound = false;
+    string target = pTarget ? *pTarget : string.init;
+
+    bool targetIsUser(string target)
     {
-        auto t = AimedCommandHandler(name, command, context);
-        router.get("/"~name, URLRouter.handlerDelegate(t));
+        return icmp2(target, user) == 0 || (target.length > 1 && target[0] == '@' && icmp2(target[1..$], user) == 0);
     }
+
+    if (target.length == 0)
+    {
+        auto users = context.recentUserList();
+        if (users.length == 0)
+            targetIsNotFound = true;
+        else
+        {
+            auto userIndex = uniform(0, users.length);
+            if (!command.allowRandomSelfAim && targetIsUser(users[userIndex]))
+            {
+                if (userIndex > 0)
+                    userIndex--;
+                else if (userIndex < users.length)
+                    userIndex++;
+                else
+                    targetIsNotFound = true;
+            }
+            target = users[userIndex];
+        }
+    }
+
+    if (targetIsUser(target))
+    {
+        targetIsSelf = true;
+    }
+
+    string format = command.format;
+    string formatSelfTarget = command.formatSelfTarget;
+    string selfTarget = command.selfTargetName;
+
+    string[string] parameters;
+    fillRandomParameters(parameters, command.randomizedParams);
+
+    if (command.variants.length)
+    {
+        size_t chooseTheVariantIndex() {
+            import std.algorithm.searching : all;
+            if (all!"a.chance > 0"(command.variants))
+            {
+                int sum;
+                foreach(ref v; command.variants) {
+                    sum += v.chance;
+                }
+                int r = uniform(0, sum);
+                int border;
+                foreach(size_t i, ref v; command.variants)
+                {
+                    border += command.variants[i].chance;
+                    if (r < border)
+                        return i;
+                }
+                return 0;
+            }
+            else
+            {
+                return uniform(0, command.variants.length);
+            }
+        }
+
+        auto chosenIndex = chooseTheVariantIndex();
+        auto chosenVariant = command.variants[chosenIndex];
+
+        if (chosenVariant.formatSelfTarget.length)
+            formatSelfTarget = chosenVariant.formatSelfTarget;
+        if (chosenVariant.format.length)
+            format = chosenVariant.format;
+
+        fillRandomParameters(parameters, command.variants[chosenIndex].randomizedParams);
+    }
+
+    parameters["user"] = user;
+    parameters["target"] = target;
+
+    logInfo("user: '%s', command: '%s', target: '%s', self: %s, notarget: %s", user, commandName, target, targetIsSelf, targetIsNotFound);
+
+    if (targetIsSelf || targetIsNotFound)
+    {
+        if (selfTarget.length)
+            parameters["target"] = selfTarget;
+        if (formatSelfTarget.length)
+            format = formatSelfTarget;
+    }
+    plainTextAnswer(res, formatNamed(format, parameters));
 }
 
 class ServerContext
@@ -364,7 +342,24 @@ void main()
     auto context = new ServerContext(serverConfig, parseServerData(dataText));
 
     auto router = new URLRouter;
-    setupAimedCommandRoutes(router, context);
+    router.get("/aimed_commands/:command", delegate(HTTPServerRequest req, HTTPServerResponse res) {
+        auto commandName = req.params["command"];
+        if (!commandName.length) {
+            res.statusCode = HTTPStatus.Forbidden;
+            plainTextAnswer(res, "Command must be specified");
+        } else {
+            auto command = commandName in context.data.aimedCommands;
+            if (command is null)
+            {
+                res.statusCode = HTTPStatus.NotFound;
+                plainTextAnswer(res, "Command "~commandName~" does not exist");
+            }
+            else
+            {
+                handleAimedCommand(req, res, commandName, *command, context);
+            }
+        }
+    });
 
     auto httpSettings = new HTTPServerSettings;
     httpSettings.port = serverConfig.port;
@@ -397,8 +392,6 @@ void main()
                 try {
                     auto serverData = readFile(serverConfig.dataPath).assumeUnique.assumeUTF.parseServerData;
                     context.data = serverData;
-                    setupAimedCommandRoutes(router, context);
-                    router.rebuild();
                     logInfo("Successfully updated server data");
                 } catch(Exception e) {
                     logError("Failed to load new data: %s", e.msg);
