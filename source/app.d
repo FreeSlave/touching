@@ -47,15 +47,17 @@ struct AimedCommandVariant
 {
     @optional string format;
     @optional @name("format_self") string formatSelfTarget;
+    @optional @name("format_no_target_found") string formatNoTargetFound;
     @optional @name("parameters") string[][string] randomizedParams;
     @optional int chance;
+    @optional @name("ignore_target") bool ignoreTarget;
 }
 
 struct AimedCommand
 {
     @optional string format;
     @optional @name("format_self") string formatSelfTarget;
-    @optional @name("format_notarget") string formatNoTarget;
+    @optional @name("format_no_target_found") string formatNoTargetFound;
     @optional @name("self") string selfTargetName;
     @optional @name("parameters") string[][string] randomizedParams;
     @optional AimedCommandVariant[] variants;
@@ -164,10 +166,69 @@ void handleAimedCommand(HTTPServerRequest req, HTTPServerResponse res, string co
     bool targetIsNotFound = false;
     string target = pTarget ? *pTarget : string.init;
 
+    string format = command.format;
+    string formatSelfTarget = command.formatSelfTarget;
+    string formatNoTargetFound = command.formatNoTargetFound;
+    string selfTarget = command.selfTargetName;
+
+    string[string] parameters;
+    fillRandomParameters(parameters, command.randomizedParams);
+
+    if (command.variants.length)
+    {
+        size_t chooseTheVariantIndex() {
+            import std.algorithm.searching : all;
+            import std.algorithm.iteration : filter;
+            import std.array;
+
+            const(AimedCommandVariant)[] variants = command.variants;
+            if (target.length > 0) {
+                variants = variants.filter!(v => !v.ignoreTarget).array;
+                if (variants.length == 0) {
+                    variants = command.variants;
+                }
+            }
+
+            if (all!"a.chance > 0"(variants))
+            {
+                int sum;
+                foreach(ref v; variants) {
+                    sum += v.chance;
+                }
+                int r = uniform(0, sum);
+                int border;
+                foreach(size_t i, ref v; variants)
+                {
+                    border += variants[i].chance;
+                    if (r < border)
+                        return i;
+                }
+                return 0;
+            }
+            else
+            {
+                return uniform(0, variants.length);
+            }
+        }
+
+        auto chosenIndex = chooseTheVariantIndex();
+        auto chosenVariant = command.variants[chosenIndex];
+
+        if (chosenVariant.formatSelfTarget.length)
+            formatSelfTarget = chosenVariant.formatSelfTarget;
+        if (chosenVariant.formatNoTargetFound.length)
+            formatNoTargetFound = chosenVariant.formatNoTargetFound;
+        if (chosenVariant.format.length)
+            format = chosenVariant.format;
+
+        fillRandomParameters(parameters, command.variants[chosenIndex].randomizedParams);
+    }
+
     bool targetIsUser(string target)
     {
         return icmp2(target, user) == 0 || (target.length > 1 && target[0] == '@' && icmp2(target[1..$], user) == 0);
     }
+
 
     if (target.length == 0)
     {
@@ -181,11 +242,13 @@ void handleAimedCommand(HTTPServerRequest req, HTTPServerResponse res, string co
             {
                 if (userIndex > 0)
                     userIndex--;
-                else if (userIndex < users.length)
+                else if (userIndex < users.length-1)
                     userIndex++;
                 else
                     targetIsNotFound = true;
             }
+            logInfo("user index: %s", userIndex);
+            logInfo("user: %s", users[userIndex]);
             target = users[userIndex];
         }
     }
@@ -193,50 +256,6 @@ void handleAimedCommand(HTTPServerRequest req, HTTPServerResponse res, string co
     if (targetIsUser(target))
     {
         targetIsSelf = true;
-    }
-
-    string format = command.format;
-    string formatSelfTarget = command.formatSelfTarget;
-    string selfTarget = command.selfTargetName;
-
-    string[string] parameters;
-    fillRandomParameters(parameters, command.randomizedParams);
-
-    if (command.variants.length)
-    {
-        size_t chooseTheVariantIndex() {
-            import std.algorithm.searching : all;
-            if (all!"a.chance > 0"(command.variants))
-            {
-                int sum;
-                foreach(ref v; command.variants) {
-                    sum += v.chance;
-                }
-                int r = uniform(0, sum);
-                int border;
-                foreach(size_t i, ref v; command.variants)
-                {
-                    border += command.variants[i].chance;
-                    if (r < border)
-                        return i;
-                }
-                return 0;
-            }
-            else
-            {
-                return uniform(0, command.variants.length);
-            }
-        }
-
-        auto chosenIndex = chooseTheVariantIndex();
-        auto chosenVariant = command.variants[chosenIndex];
-
-        if (chosenVariant.formatSelfTarget.length)
-            formatSelfTarget = chosenVariant.formatSelfTarget;
-        if (chosenVariant.format.length)
-            format = chosenVariant.format;
-
-        fillRandomParameters(parameters, command.variants[chosenIndex].randomizedParams);
     }
 
     parameters["user"] = user;
@@ -248,8 +267,18 @@ void handleAimedCommand(HTTPServerRequest req, HTTPServerResponse res, string co
     {
         if (selfTarget.length)
             parameters["target"] = selfTarget;
-        if (formatSelfTarget.length)
-            format = formatSelfTarget;
+        if (targetIsSelf)
+        {
+            if (formatSelfTarget.length)
+                format = formatSelfTarget;
+        }
+        if (targetIsNotFound)
+        {
+            if (formatNoTargetFound.length)
+                format = formatNoTargetFound;
+            else if (formatSelfTarget.length)
+                format = formatSelfTarget;
+        }
     }
     plainTextAnswer(res, formatNamed(format, parameters));
 }
