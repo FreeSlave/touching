@@ -12,6 +12,8 @@ import vibe.data.json;
 import vibe.utils.string;
 
 import std.algorithm.sorting : sort;
+import std.algorithm.iteration : map;
+import std.array;
 import std.datetime.stopwatch;
 import std.exception : assumeUnique;
 import std.random : uniform;
@@ -85,6 +87,9 @@ struct ServerConfig
     @optional @name("refetch_users_interval") ushort refetchUsersInterval = 20;
     @name("twitch_channel") string twitchChannel;
     @optional @name("log_file") string logFile;
+    @name("client_id") string clientId;
+    @name("user_access_token") string userAccessToken;
+    @name("broadcaster_id") string broadcasterId;
 }
 
 ServerConfig parseServerConfig(string configText)
@@ -179,7 +184,6 @@ void handleAimedCommand(HTTPServerRequest req, HTTPServerResponse res, string co
         size_t chooseTheVariantIndex() {
             import std.algorithm.searching : all;
             import std.algorithm.iteration : filter;
-            import std.array;
 
             const(AimedCommandVariant)[] variants = command.variants;
             if (target.length > 0) {
@@ -283,6 +287,13 @@ void handleAimedCommand(HTTPServerRequest req, HTTPServerResponse res, string co
     plainTextAnswer(res, formatNamed(format, parameters));
 }
 
+struct UserData
+{
+    string user_id;
+    string user_login;
+    string user_name;
+}
+
 class ServerContext
 {
     ServerConfig config;
@@ -307,30 +318,25 @@ class ServerContext
         }
         try {
             updatingUsers = true;
-            res = requestHTTP("http://tmi.twitch.tv/group/user/" ~ config.twitchChannel ~ "/chatters", (scope HTTPClientRequest req) {});
+            res = requestHTTP("https://api.twitch.tv/helix/chat/chatters?broadcaster_id="~config.broadcasterId~"&moderator_id="~config.broadcasterId, delegate(scope HTTPClientRequest req) {
+                req.headers["Authorization"] = "Bearer " ~ config.userAccessToken;
+                req.headers["Client-Id"] = config.clientId;
+            });
+
             scope(exit) res.dropBody();
             auto chattersJson = res.readJson();
 
             import std.array : appender;
 
-            auto chattersObj = chattersJson["chatters"];
-            auto chatterCountJson = chattersJson["chatter_count"];
-            auto chatterCount = chatterCountJson.get!size_t;
-
-            auto allUsers = appender!(string[]);
-            allUsers.reserve(chatterCount);
-            allUsers.put(deserializeJson!(string[])(chattersObj["broadcaster"]));
-            allUsers.put(deserializeJson!(string[])(chattersObj["vips"]));
-            allUsers.put(deserializeJson!(string[])(chattersObj["moderators"]));
-            allUsers.put(deserializeJson!(string[])(chattersObj["viewers"]));
+            UserData[] chatters = deserializeJson!(UserData[])(chattersJson["data"]);
 
             auto sortedBots = data.bots.assumeSorted;
             scope(exit) sortedBots.release();
             auto nonBotUsers = appender!(string[]);
-            nonBotUsers.reserve(chatterCount);
-            foreach(user; allUsers) {
-                if (!sortedBots.contains(user)) {
-                    nonBotUsers.put(user);
+            nonBotUsers.reserve(chatters.length);
+            foreach(user; chatters) {
+                if (!sortedBots.contains(user.user_login)) {
+                    nonBotUsers.put(user.user_name);
                 }
             }
             users = nonBotUsers[];
