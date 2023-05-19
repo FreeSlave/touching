@@ -374,13 +374,13 @@ void main()
     router.get("/aimed_commands/:command", delegate(HTTPServerRequest req, HTTPServerResponse res) {
         auto commandName = req.params["command"];
         if (!commandName.length) {
-            res.statusCode = HTTPStatus.Forbidden;
+            res.statusCode = HTTPStatus.forbidden;
             plainTextAnswer(res, "Command must be specified");
         } else {
             auto command = commandName in context.data.aimedCommands;
             if (command is null)
             {
-                res.statusCode = HTTPStatus.NotFound;
+                res.statusCode = HTTPStatus.notFound;
                 plainTextAnswer(res, "Command "~commandName~" does not exist");
             }
             else
