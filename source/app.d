@@ -10,6 +10,7 @@ import vibe.http.client;
 import vibe.http.fileserver;
 import vibe.data.json;
 import vibe.utils.string;
+import vibe.textfilter.urlencode;
 
 import std.algorithm.sorting : sort;
 import std.algorithm.iteration : map;
@@ -88,7 +89,9 @@ struct ServerConfig
     @name("twitch_channel") string twitchChannel;
     @optional @name("log_file") string logFile;
     @name("client_id") string clientId;
-    @name("user_access_token") string userAccessToken;
+    @name("client_secret") string clientSecret;
+    @name("refresh_token") string refreshToken;
+    @optional @name("refresh_token_interval") uint refreshTokenInterval = 3600;
     @name("broadcaster_id") string broadcasterId;
 }
 
@@ -299,18 +302,50 @@ class ServerContext
     ServerConfig config;
     ServerData data;
     StopWatch usersUpdateWatch;
+    StopWatch refreshTokenWatch;
     string[] users;
     bool updatingUsers;
+    string userAccessToken;
 
     this(ServerConfig config, ServerData data) {
         this.config = config;
         this.data = data;
         usersUpdateWatch = StopWatch(AutoStart.no);
+        refreshTokenWatch = StopWatch(AutoStart.no);
+    }
+
+    void updateUserAccessToken()
+    {
+        HTTPClientResponse tokenResponse = requestHTTP("https://id.twitch.tv/oauth2/token?client_id="~config.clientId~"&client_secret="~config.clientSecret~"&grant_type=refresh_token&refresh_token="~urlEncode(config.refreshToken),
+            delegate(scope HTTPClientRequest req) {
+                req.method = HTTPMethod.POST;
+            });
+        enforceHTTP(tokenResponse.statusCode == HTTPStatus.ok, cast(HTTPStatus)tokenResponse.statusCode, "Unexpected HTTP status code when refreshing user access token");
+        auto tokenResJson = tokenResponse.readJson();
+        userAccessToken = deserializeJson!string(tokenResJson["access_token"]);
+        string refreshToken = deserializeJson!string(tokenResJson["refresh_token"]);
+        logInfo("New user access token: %s. Refresh Token: %s. The same? %s", userAccessToken, refreshToken, refreshToken == config.refreshToken);
+    }
+
+    string recentUserAccessToken()
+    {
+        if (!refreshTokenWatch.running)
+        {
+            logInfo("Refreshing token for the first time");
+            updateUserAccessToken();
+            refreshTokenWatch.start();
+        }
+        else if (refreshTokenWatch.peek.total!"seconds" >= config.refreshTokenInterval)
+        {
+            logInfo("Refreshing user access token");
+            updateUserAccessToken();
+            refreshTokenWatch.reset();
+        }
+        return userAccessToken;
     }
 
     void updateUserList()
     {
-        HTTPClientResponse res;
         if (updatingUsers)
         {
             logInfo("Already in the process of updating users");
@@ -318,20 +353,22 @@ class ServerContext
         }
         try {
             updatingUsers = true;
-            res = requestHTTP("https://api.twitch.tv/helix/chat/chatters?broadcaster_id="~config.broadcasterId~"&moderator_id="~config.broadcasterId, delegate(scope HTTPClientRequest req) {
-                req.headers["Authorization"] = "Bearer " ~ config.userAccessToken;
+
+            recentUserAccessToken();
+
+            HTTPClientResponse res = requestHTTP("https://api.twitch.tv/helix/chat/chatters?broadcaster_id="~config.broadcasterId~"&moderator_id="~config.broadcasterId, delegate(scope HTTPClientRequest req) {
+                req.headers["Authorization"] = "Bearer " ~ userAccessToken;
                 req.headers["Client-Id"] = config.clientId;
             });
-
             scope(exit) res.dropBody();
+            enforceHTTP(res.statusCode == HTTPStatus.ok, cast(HTTPStatus)res.statusCode, "Unexpected HTTP status code when getting chatters");
+
             auto chattersJson = res.readJson();
-
-            import std.array : appender;
-
             UserData[] chatters = deserializeJson!(UserData[])(chattersJson["data"]);
 
             auto sortedBots = data.bots.assumeSorted;
             scope(exit) sortedBots.release();
+
             auto nonBotUsers = appender!(string[]);
             nonBotUsers.reserve(chatters.length);
             foreach(user; chatters) {
