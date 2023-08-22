@@ -10,6 +10,7 @@ docs/
 *.lib
 touching-test-*
 *.exe
+*.pdb
 *.o
 *.obj
 *.lst
