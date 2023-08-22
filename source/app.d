@@ -14,6 +14,7 @@ import vibe.textfilter.urlencode;
 
 import std.algorithm.sorting : sort;
 import std.algorithm.iteration : map;
+import std.algorithm.comparison : equal;
 import std.array;
 import std.datetime.stopwatch;
 import std.exception : assumeUnique;
@@ -451,7 +452,7 @@ void main()
             bool dataChanged = false;
             foreach(ref change; changes)
             {
-                if (change.type == DirectoryChangeType.modified && change.path == dataNativePath)
+                if (change.type == DirectoryChangeType.modified && equal(change.path.bySegment, dataNativePath.bySegment))
                 {
                     dataChanged = true;
                     break;
