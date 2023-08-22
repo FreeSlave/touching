@@ -4,11 +4,8 @@
 	],
 	"copyright": "Copyright © 2020, Roman Chistokhodov",
 	"dependencies": {
-		"vibe-d:http": "~>0.9.0",
+		"vibe-d:http": "*",
 		"vibe-d:tls": "*"
-	},
-	"subConfigurations": {
-		"vibe-d:tls": "notls"
 	},
 	"description": "A minimal D application.",
 	"license": "BSL-1.0",
